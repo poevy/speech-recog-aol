@@ -27,13 +27,23 @@ from typing import Dict, List, Optional, Union
 
 import torch
 import numpy as np
-from datasets import Dataset, load_metric
+from datasets import Dataset
+
+# Use evaluate library instead of deprecated load_metric
+try:
+    import evaluate
+    wer_metric = evaluate.load("wer")
+    cer_metric = evaluate.load("cer")
+except ImportError:
+    from jiwer import wer as wer_func, cer as cer_func
+    wer_metric = None
+    cer_metric = None
+
 from transformers import (
     Wav2Vec2Processor,
     Wav2Vec2ForCTC,
     TrainingArguments,
     Trainer,
-    Wav2Vec2CTCTokenizer
 )
 
 # Add parent directory to path
@@ -128,8 +138,10 @@ class DataCollatorCTCWithPadding:
         return batch
 
 
-def compute_metrics(pred, processor, wer_metric, cer_metric):
+def compute_metrics(pred, processor):
     """Compute WER and CER."""
+    from jiwer import wer, cer
+    
     pred_logits = pred.predictions
     pred_ids = np.argmax(pred_logits, axis=-1)
     
@@ -145,9 +157,9 @@ def compute_metrics(pred, processor, wer_metric, cer_metric):
     pred_str = [s.lower().strip() for s in pred_str]
     label_str = [s.lower().strip() for s in label_str]
     
-    # Compute metrics
-    wer_value = wer_metric.compute(predictions=pred_str, references=label_str)
-    cer_value = cer_metric.compute(predictions=pred_str, references=label_str)
+    # Compute metrics using jiwer directly
+    wer_value = wer(label_str, pred_str)
+    cer_value = cer(label_str, pred_str)
     
     return {"wer": wer_value, "cer": cer_value}
 
@@ -209,10 +221,6 @@ def main():
     # Data collator
     data_collator = DataCollatorCTCWithPadding(processor=processor, padding=True)
     
-    # Metrics
-    wer_metric = load_metric("wer")
-    cer_metric = load_metric("cer")
-    
     # Training args
     training_args = TrainingArguments(
         output_dir=args.output_dir,
@@ -241,7 +249,7 @@ def main():
         eval_dataset=eval_dataset,
         tokenizer=processor.tokenizer,
         data_collator=data_collator,
-        compute_metrics=lambda p: compute_metrics(p, processor, wer_metric, cer_metric),
+        compute_metrics=lambda p: compute_metrics(p, processor),
     )
     
     # Train
